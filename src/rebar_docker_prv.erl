@@ -3,7 +3,7 @@
 -export([init/1, do/1, format_error/1]).
 
 -define(PROVIDER, docker).
--define(DEPS, [app_discovery]).
+-define(DEPS, [lock]).
 
 -define(builder(ImageName, Checksum), [ImageName, "_builder:", Checksum]).
 -define(runner(ImageName, GitRef), [ImageName, ":", GitRef]).
