@@ -1,7 +1,7 @@
-rebar_docker
+Rebar3 Docker
 =====
 
-A rebar plugin
+A rebar plugin for generating docker images for running tests and dialyzer against as well as a final image for running a release.
 
 Build
 -----
@@ -13,14 +13,12 @@ Use
 
 Add the plugin to your rebar config:
 
-    {plugins, [
-        {rebar_docker, {git, "https://host/user/rebar_docker.git", {tag, "0.1.0"}}}
+    {project_plugins, [
+        {rebar_docker, {git, "https://github.com/tsloughter/rebar_docker.git", {branch, "master"}}}
     ]}.
 
 Then just call your plugin directly in an existing application:
 
 
-    $ rebar3 rebar_docker
-    ===> Fetching rebar_docker
-    ===> Compiling rebar_docker
-    <Plugin Output>
+    $ rebar3 docker
+    
