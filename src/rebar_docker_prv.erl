@@ -45,19 +45,19 @@ format_error(Reason) ->
 
 build_builder_image(ReleaseName, Checksum, Dir, State) ->
     DockerfilePath = filename:join(Dir, "Dockerfile.full"),
-    file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", ReleaseName)),
+    file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", "alpine:3.9", ReleaseName)),
     ProjectDir = rebar_state:dir(State),
     Cmd = builder_image(ReleaseName, Checksum, DockerfilePath, ProjectDir),
     rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
 
 build_runner_image(ReleaseName, Checksum, Dir, State) ->
     DockerfilePath = filename:join(Dir, "Dockerfile.full"),
-    file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", ReleaseName)),
+    file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", "alpine:3.9", ReleaseName)),
     ProjectDir = rebar_state:dir(State),
     Checksum = checksum(State),
     GitRef = string:trim(os:cmd("git rev-parse HEAD")),
     Cmd = runner_image(ReleaseName, Checksum, GitRef, DockerfilePath, ProjectDir),
-    rebar_utils:sh(lists:flatten(Cmd), [use_stdout, abort_on_error]).
+    rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
 
 build_plt_image(ReleaseName, Checksum, Dir, State) ->
     DockerfilePath = filename:join(Dir, "Dockerfile.plt"),
@@ -94,7 +94,7 @@ plt_image(ImageName, Checksum, Dockerfile, Dir) ->
     ["docker build --cache-from=", ImageName, "_builder:", Checksum, " --cache-from=",
      ImageName, "_plt:", Checksum, " -t ", ImageName, "_plt:", Checksum, " -f ", Dockerfile, " ", Dir].
 
-dockerfile(BaseImage, Release) ->
+dockerfile(BaseImage, RunnerBaseImage, Release) ->
     ["FROM ", BaseImage, " as builder
 
 # git for fetching non-hex depenencies
@@ -117,7 +117,7 @@ RUN rebar3 as prod tar
 RUN mkdir -p /opt/rel
 RUN tar -zxvf /src/_build/prod/rel/*/*.tar.gz -C /opt/rel
 
-FROM alpine:3.9 as runner
+FROM ", RunnerBaseImage, " as runner
 
 # install openssl, needed by the crypto app
 RUN apk add --no-cache openssl ncurses
