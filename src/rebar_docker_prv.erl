@@ -77,6 +77,7 @@ build_plt_image(ImageRepo, ReleaseName, Checksum, Dir, State) ->
     Checksum = checksum(State),
     ImageName = image_name(ImageRepo, ReleaseName),
     Cmd = plt_image(ImageName, Checksum, DockerfilePath, ProjectDir),
+    io:format("CDM ~s~n", [Cmd]),
     rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
 
 release_name(State) ->
@@ -112,7 +113,7 @@ dockerfile(BaseImage, RunnerBaseImage, Release) ->
 
 # git for fetching non-hex depenencies
 # tar for unpacking the target system
-RUN apk add --no-cache tar git
+RUN apk add --no-cache git
 
 WORKDIR /src
 
@@ -121,6 +122,8 @@ COPY rebar.config rebar.lock /src/
 RUN rebar3 compile
 
 FROM builder as releaser
+
+RUN apk add --no-cache tar
 
 # copy in the source and build the release tarball
 COPY . /src
@@ -150,7 +153,7 @@ CMD [\"foreground\"]
 "].
 
 plt_dockerfile(BaseImage) ->
-    ["FROM ", BaseImage, " as plter
+    ["FROM ", BaseImage, " as builder
 
 # git for fetching non-hex depenencies
 RUN apk add --no-cache git
