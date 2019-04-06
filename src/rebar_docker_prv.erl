@@ -5,6 +5,10 @@
 -define(PROVIDER, docker).
 -define(DEPS, [app_discovery]).
 
+-define(builder(ImageName, Checksum), [ImageName, "_builder:", Checksum]).
+-define(runner(ImageName, GitRef), [ImageName, ":", GitRef]).
+-define(plt(ImageName, Checksum), [ImageName, "_plt:", Checksum]).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
@@ -29,9 +33,9 @@ do(State) ->
     ReleaseName = release_name(State),
     Checksum = checksum(State),
 
-    build_builder_image(ReleaseName, Checksum, TmpDir, State),
-    build_runner_image(ReleaseName, Checksum, TmpDir, State),
-    build_plt_image(ReleaseName, Checksum, TmpDir, State),
+    build_builder_image("", ReleaseName, Checksum, TmpDir, State),
+    build_runner_image("", ReleaseName, Checksum, TmpDir, State),
+    build_plt_image("", ReleaseName, Checksum, TmpDir, State),
 
     {ok, State}.
 
@@ -43,28 +47,36 @@ format_error(Reason) ->
 
 %%
 
-build_builder_image(ReleaseName, Checksum, Dir, State) ->
+image_name([], ReleaseName) ->
+    ReleaseName;
+image_name(ImageRepo, ReleaseName) ->
+    filename:join(ImageRepo, ReleaseName).
+
+build_builder_image(ImageRepo, ReleaseName, Checksum, Dir, State) ->
     DockerfilePath = filename:join(Dir, "Dockerfile.full"),
     file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", "alpine:3.9", ReleaseName)),
     ProjectDir = rebar_state:dir(State),
-    Cmd = builder_image(ReleaseName, Checksum, DockerfilePath, ProjectDir),
+    ImageName = image_name(ImageRepo, ReleaseName),
+    Cmd = builder_image(ImageName, Checksum, DockerfilePath, ProjectDir),
     rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
 
-build_runner_image(ReleaseName, Checksum, Dir, State) ->
+build_runner_image(ImageRepo, ReleaseName, Checksum, Dir, State) ->
     DockerfilePath = filename:join(Dir, "Dockerfile.full"),
     file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", "alpine:3.9", ReleaseName)),
     ProjectDir = rebar_state:dir(State),
     Checksum = checksum(State),
     GitRef = string:trim(os:cmd("git rev-parse HEAD")),
-    Cmd = runner_image(ReleaseName, Checksum, GitRef, DockerfilePath, ProjectDir),
+    ImageName = image_name(ImageRepo, ReleaseName),
+    Cmd = runner_image(ImageName, Checksum, GitRef, DockerfilePath, ProjectDir),
     rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
 
-build_plt_image(ReleaseName, Checksum, Dir, State) ->
+build_plt_image(ImageRepo, ReleaseName, Checksum, Dir, State) ->
     DockerfilePath = filename:join(Dir, "Dockerfile.plt"),
     file:write_file(DockerfilePath, plt_dockerfile("erlang:21-alpine")),
     ProjectDir = rebar_state:dir(State),
     Checksum = checksum(State),
-    Cmd = plt_image(ReleaseName, Checksum, DockerfilePath, ProjectDir),
+    ImageName = image_name(ImageRepo, ReleaseName),
+    Cmd = plt_image(ImageName, Checksum, DockerfilePath, ProjectDir),
     rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
 
 release_name(State) ->
@@ -83,16 +95,17 @@ checksum(State) ->
     integer_to_list(erlang:phash2([ErlOpts, Locks])).
 
 builder_image(ImageName, Checksum, Dockerfile, Dir) ->
-    ["docker build --cache-from=", ImageName, "_builder:", Checksum,
-     " --target builder -t ", ImageName, "_builder:", Checksum, " -f ", Dockerfile, " ", Dir].
+    ["docker build --cache-from=", ?builder(ImageName, Checksum), " --target builder ",
+     "-t ", ?builder(ImageName, Checksum), " -f ", Dockerfile, " ", Dir].
 
 runner_image(ImageName, Checksum, GitRef, Dockerfile, Dir) ->
-    ["docker build --cache-from=", ImageName, "_builder:", Checksum, " --cache-from=",
-     ImageName, ":", GitRef, " --target runner -t ", ImageName, ":", GitRef, " -f ", Dockerfile, " ", Dir].
+    ["docker build --cache-from=", ?builder(ImageName, Checksum), " --cache-from=",
+     ?runner(ImageName, GitRef), " --target runner -t ", ?runner(ImageName, GitRef),
+     " -f ", Dockerfile, " ", Dir].
 
 plt_image(ImageName, Checksum, Dockerfile, Dir) ->
-    ["docker build --cache-from=", ImageName, "_builder:", Checksum, " --cache-from=",
-     ImageName, "_plt:", Checksum, " -t ", ImageName, "_plt:", Checksum, " -f ", Dockerfile, " ", Dir].
+    ["docker build --cache-from=", ?builder(ImageName, Checksum), " --cache-from=",
+     ?plt(ImageName, Checksum), " -t ", ?plt(ImageName, Checksum), " -f ", Dockerfile, " ", Dir].
 
 dockerfile(BaseImage, RunnerBaseImage, Release) ->
     ["FROM ", BaseImage, " as builder
@@ -133,7 +146,8 @@ ENV HOME /opt/", Release, "/bin
 
 ENTRYPOINT [\"/opt/", Release, "/bin/", Release, "\"]
 
-CMD [\"foreground\"]"].
+CMD [\"foreground\"]
+"].
 
 plt_dockerfile(BaseImage) ->
     ["FROM ", BaseImage, " as plter
