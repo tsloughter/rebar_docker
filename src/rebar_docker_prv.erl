@@ -29,13 +29,14 @@ init(State) ->
 
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, string()}.
 do(State) ->
-    TmpDir = ec_file:insecure_mkdtemp(),
     ReleaseName = release_name(State),
     Checksum = checksum(State),
 
-    build_builder_image("", ReleaseName, Checksum, TmpDir, State),
-    build_runner_image("", ReleaseName, Checksum, TmpDir, State),
-    build_plt_image("", ReleaseName, Checksum, TmpDir, State),
+    Dockerfile = write_dockerfile(ReleaseName),
+
+    build_builder_image("", ReleaseName, Checksum, Dockerfile, State),
+    build_runner_image("", ReleaseName, Checksum, Dockerfile, State),
+    build_plt_image("", ReleaseName, Checksum, Dockerfile, State),
 
     {ok, State}.
 
@@ -47,38 +48,40 @@ format_error(Reason) ->
 
 %%
 
+write_dockerfile(ReleaseName) ->
+    TmpDir = ec_file:insecure_mkdtemp(),
+    Dockerfile = filename:join(TmpDir, "Dockerfile.full"),
+    file:write_file(Dockerfile, dockerfile("erlang:21-alpine", "alpine:3.9", ReleaseName)),
+    Dockerfile.
+
+run_docker_build(Cmd) ->
+    rebar_utils:sh(Cmd, [use_stdout, abort_on_error, {env, [{"DOCKER_BUILDKIT", "1"}]}]).
+
 image_name([], ReleaseName) ->
     ReleaseName;
 image_name(ImageRepo, ReleaseName) ->
     filename:join(ImageRepo, ReleaseName).
 
-build_builder_image(ImageRepo, ReleaseName, Checksum, Dir, State) ->
-    DockerfilePath = filename:join(Dir, "Dockerfile.full"),
-    file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", "alpine:3.9", ReleaseName)),
+build_builder_image(ImageRepo, ReleaseName, Checksum, Dockerfile, State) ->
     ProjectDir = rebar_state:dir(State),
     ImageName = image_name(ImageRepo, ReleaseName),
-    Cmd = builder_image(ImageName, Checksum, DockerfilePath, ProjectDir),
-    rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
+    Cmd = builder_image(ImageName, Checksum, Dockerfile, ProjectDir),
+    run_docker_build(Cmd).
 
-build_runner_image(ImageRepo, ReleaseName, Checksum, Dir, State) ->
-    DockerfilePath = filename:join(Dir, "Dockerfile.full"),
-    file:write_file(DockerfilePath, dockerfile("erlang:21-alpine", "alpine:3.9", ReleaseName)),
+build_runner_image(ImageRepo, ReleaseName, Checksum, Dockerfile, State) ->
     ProjectDir = rebar_state:dir(State),
     Checksum = checksum(State),
     GitRef = string:trim(os:cmd("git rev-parse HEAD")),
     ImageName = image_name(ImageRepo, ReleaseName),
-    Cmd = runner_image(ImageName, Checksum, GitRef, DockerfilePath, ProjectDir),
-    rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
+    Cmd = runner_image(ImageName, Checksum, GitRef, Dockerfile, ProjectDir),
+    run_docker_build(Cmd).
 
-build_plt_image(ImageRepo, ReleaseName, Checksum, Dir, State) ->
-    DockerfilePath = filename:join(Dir, "Dockerfile.plt"),
-    file:write_file(DockerfilePath, plt_dockerfile("erlang:21-alpine")),
+build_plt_image(ImageRepo, ReleaseName, Checksum, Dockerfile, State) ->
     ProjectDir = rebar_state:dir(State),
     Checksum = checksum(State),
     ImageName = image_name(ImageRepo, ReleaseName),
-    Cmd = plt_image(ImageName, Checksum, DockerfilePath, ProjectDir),
-    io:format("CDM ~s~n", [Cmd]),
-    rebar_utils:sh(Cmd, [use_stdout, abort_on_error]).
+    Cmd = plt_image(ImageName, Checksum, Dockerfile, ProjectDir),
+    run_docker_build(Cmd).
 
 release_name(State) ->
     Relx = rebar_state:get(State, relx, []),
@@ -109,7 +112,8 @@ plt_image(ImageName, Checksum, Dockerfile, Dir) ->
      ?plt(ImageName, Checksum), " -t ", ?plt(ImageName, Checksum), " -f ", Dockerfile, " ", Dir].
 
 dockerfile(BaseImage, RunnerBaseImage, Release) ->
-    ["FROM ", BaseImage, " as builder
+    ["# syntax = docker/dockerfile:experimental
+FROM ", BaseImage, " as builder
 
 # git for fetching non-hex depenencies
 # tar for unpacking the target system
@@ -119,7 +123,7 @@ WORKDIR /src
 
 # build and cache dependencies as their own layer
 COPY rebar.config rebar.lock /src/
-RUN rebar3 compile
+RUN --mount=type=cache,target=/root/.cache/rebar3 rebar3 compile
 
 FROM builder as releaser
 
@@ -150,21 +154,10 @@ ENV HOME /opt/", Release, "/bin
 ENTRYPOINT [\"/opt/", Release, "/bin/", Release, "\"]
 
 CMD [\"foreground\"]
-"].
 
-plt_dockerfile(BaseImage) ->
-    ["FROM ", BaseImage, " as builder
+FROM builder as plter
 
-# git for fetching non-hex depenencies
-RUN apk add --no-cache git
-
-WORKDIR /src
-
-# build and cache dependencies as their own layer
-COPY rebar.config rebar.lock /src/
-RUN rebar3 compile
-
-RUN rebar3 dialyzer --plt-location $HOME/.cache/rebar3 --plt-prefix deps --base-plt-prefix otp
+RUN --mount=type=cache,target=/root/.cache/rebar3 ./rebar3 dialyzer --plt-location $HOME/.cache/rebar3 --plt-prefix deps --base-plt-prefix otp
 
 ENTRYPOINT [\"rebar3\"]
 

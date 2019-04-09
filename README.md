@@ -6,6 +6,8 @@ A rebar plugin for generating docker images for running tests and dialyzer again
 Use
 ---
 
+Requires Docker 18.09 or above.
+
 Add the plugin to your `rebar.config` as a `project_plugin`:
 
 ```erlang
